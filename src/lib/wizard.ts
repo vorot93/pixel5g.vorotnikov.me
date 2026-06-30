@@ -4,7 +4,7 @@ import { detectSku, probeRoot, listConfigDir, pullFile } from "./device";
 /** A user-actionable precondition failure (unrooted, unknown model, missing files…). */
 export class PreconditionError extends Error {}
 
-/** The slice of engine.ts prepareModule needs — injected so it is testable without wasm. */
+/** The slice of engine.ts the prepare/build steps need — injected so they are testable without wasm. */
 export interface EngineFacade {
   CARRIER: string;
   detectModel(sku: string): { code: string; display: string; lteId: bigint; nrAnchor: bigint } | undefined;
@@ -22,9 +22,16 @@ export interface PreparedModule {
   skipped: number;
 }
 
-/** Steps 2–4: detect → probe root → read config → build the module. Pure over its inputs.
+/** The detect→pull result: the chosen model and the carrier-config bytes pulled off the device. */
+export interface PreparedInputs {
+  model: { code: string; display: string };
+  files: { name: string; bytes: Uint8Array }[];
+}
+
+/** Steps 2–3: detect → probe root → read config → pull files. No build, no WASM.
+ *  Split out from the build so the UI can show step 4 ("Build") entering its own running state.
  *  `log` receives human-readable progress lines. Throws PreconditionError on a user-fixable stop. */
-export async function prepareModule(s: AdbSession, engine: EngineFacade, log: (m: string) => void): Promise<PreparedModule> {
+export async function prepareInputs(s: AdbSession, engine: EngineFacade, log: (m: string) => void): Promise<PreparedInputs> {
   // Step 2 — detect + root
   const sku = await detectSku(s);
   const model = engine.detectModel(sku);
@@ -42,10 +49,14 @@ export async function prepareModule(s: AdbSession, engine: EngineFacade, log: (m
   const files: { name: string; bytes: Uint8Array }[] = [];
   for (const name of sel.toPull) files.push({ name, bytes: await pullFile(s, name) });
 
-  // Step 4 — build (WASM)
+  return { model: { code: model.code, display: model.display }, files };
+}
+
+/** Step 4: load patches + build the Magisk module (WASM) from already-pulled inputs. */
+export async function buildPrepared(engine: EngineFacade, inputs: PreparedInputs, log: (m: string) => void): Promise<PreparedModule> {
   const patches = await engine.loadPatches();
-  const r = engine.buildModule(model.code, engine.CARRIER, files, patches);
+  const r = engine.buildModule(inputs.model.code, engine.CARRIER, inputs.files, patches);
   log(`Built module: ${r.included.join(", ")}${r.skipped ? ` (${r.skipped} combo(s) dropped for this model)` : ""}.`);
   for (const w of r.warnings) log(`warning: ${w}`);
-  return { model: { code: model.code, display: model.display }, zip: r.zip, included: r.included, warnings: r.warnings, skipped: r.skipped };
+  return { model: inputs.model, zip: r.zip, included: r.included, warnings: r.warnings, skipped: r.skipped };
 }

@@ -41,13 +41,17 @@ export async function connect(): Promise<AdbSession> {
     async pushFile(filename, bytes) {
       const sync = await adb.sync();
       try {
+        // Pin 0o644 (rw-r--r--); ya-webadb's sync.write otherwise defaults to 0o666
+        // (world-writable). Magisk only needs to read the module zip, never execute it.
         const file = ReadableStream.from<MaybeConsumable<Uint8Array>>([bytes]);
-        await sync.write({ filename, file });
+        await sync.write({ filename, file, permission: 0o644 });
       } finally {
         await sync.dispose();
       }
     },
     reboot: async () => {
+      // power.reboot() resolves to the daemon's response string; intentionally discarded
+      // because AdbSession.reboot is declared void.
       await adb.power.reboot();
     },
     close: async () => {

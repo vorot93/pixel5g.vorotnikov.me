@@ -25,10 +25,12 @@ export async function probeRoot(s: AdbSession): Promise<boolean> {
 /** Basenames in the on-device uecapconfig dir (root read). */
 export async function listConfigDir(s: AdbSession): Promise<string[]> {
   const out = await s.runText(`su -c 'ls ${UECAP_DIR}'`);
-  return out.split(/\s+/).map((x) => x.trim()).filter(Boolean);
+  return out.split(/\s+/).filter(Boolean); // split on \s+ already yields trimmed tokens
 }
 
-/** Pull one config file's bytes (base64 over the shell — binary-safe). */
+/** Pull one config file's bytes (base64 over the shell — binary-safe).
+ *  `name` is a bare basename straight from listConfigDir's `ls` output (device-controlled),
+ *  not untrusted user input, so it is interpolated into the shell without escaping. */
 export async function pullFile(s: AdbSession, name: string): Promise<Uint8Array> {
   const b64 = await s.runText(`su -c 'cat ${UECAP_DIR}/${name} | base64 -w0'`);
   return base64Decode(b64.trim());

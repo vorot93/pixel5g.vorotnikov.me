@@ -2,7 +2,7 @@ import { $, component$, useSignal, useStore } from "@builder.io/qwik";
 import type { DocumentHead } from "@builder.io/qwik-city";
 import type { AdbSession } from "~/lib/adb";
 import { installModule } from "~/lib/device";
-import { prepareModule, PreconditionError, type PreparedModule } from "~/lib/wizard";
+import { prepareInputs, buildPrepared, PreconditionError, type PreparedModule } from "~/lib/wizard";
 import * as engine from "~/lib/engine";
 import { StepRow, type StepState } from "~/components/step-row";
 import { LogPanel } from "~/components/log-panel";
@@ -25,6 +25,9 @@ export default component$(() => {
 
   const append = $((m: string) => { store.log = [...store.log, m]; });
   const setStep = $((i: number, s: StepState, d?: string) => { store.steps = store.steps.map((x, j) => (j === i ? s : x)); if (d !== undefined) store.detail = store.detail.map((x, j) => (j === i ? d : x)); });
+  // Single place that tears down the USB session. Fire-and-forget close (a wedged close()
+  // must never block a caller's `finally`); always null the signal so a retry reconnects cleanly.
+  const closeSession = $(() => { const s = session.value; if (s) { void s.close().catch(() => {}); session.value = undefined; } });
 
   // Steps 1–4: connect, then prepare the module (detect→read→build). No device mutation.
   const run = $(async () => {
@@ -34,6 +37,7 @@ export default component$(() => {
       const { connect, isWebUsbAvailable } = await import("~/lib/adb");
       if (!isWebUsbAvailable()) { supported.value = false; return; }
       store.log = []; store.ready = false; store.done = false;
+      const log = (m: string) => { store.log = [...store.log, m]; };   // one plain sink for the prepare/build progress callbacks
       try {
         await setStep(0, "running");
         const s = await connect();
@@ -41,18 +45,23 @@ export default component$(() => {
         await setStep(0, "done"); await append("Connected.");
         await engine.initEngine();
         await setStep(1, "running"); await setStep(2, "running");
-        const res = await prepareModule(s, engine, (m) => { store.log = [...store.log, m]; });
-        await setStep(1, "done", res.model.display); await setStep(2, "done", res.included.join(", "));
+        const inputs = await prepareInputs(s, engine, log);
+        await setStep(1, "done", inputs.model.display);
+        await setStep(2, "done", inputs.files.map((f) => f.name).join(", "));   // pulled filenames, not the build artifact
+        await setStep(3, "running");                                            // "Build" now gets its own running state
+        const res = await buildPrepared(engine, inputs, log);
         await setStep(3, "done", res.skipped ? `${res.skipped} combo(s) dropped` : "ready");
         prepared.value = res; store.ready = true; await setStep(4, "active");
       } catch (e) {
-        // Reset EVERY in-flight step to "error" (steps 1 & 2 both run before the single
-        // prepareModule call), not just the first — else a step is left stuck "running".
+        // Reset EVERY in-flight step to "error" (more than one can be "running" at once —
+        // steps 1 & 2 during prepareInputs, step 3 during buildPrepared), not just the first,
+        // else a step is left stuck "running".
         const msg = e instanceof Error ? e.message : String(e);
         store.steps = store.steps.map((s) => (s === "running" ? "error" : s)) as StepState[];
         const first = store.steps.indexOf("error");
         if (first >= 0) store.detail = store.detail.map((d, j) => (j === first ? msg : d));
         await append((e instanceof PreconditionError ? "" : "error: ") + msg);
+        await closeSession();   // free the USB interface for a retry; fire-and-forget, never blocks the finally below
       }
     } finally {
       busy.value = false;
@@ -62,6 +71,8 @@ export default component$(() => {
   // Step 5: the only device-mutating action — explicit confirm.
   const install = $(async () => {
     const s = session.value, p = prepared.value; if (!s || !p) return;
+    if (busy.value) return;            // guard against a double-click launching two installs/reboots
+    busy.value = true;
     try {
       await setStep(4, "running");
       await append("Installing module…");
@@ -70,14 +81,16 @@ export default component$(() => {
       await append("Rebooting…"); await s.reboot();
       await setStep(4, "done"); store.done = true; store.ready = false;
     } catch (e) { await setStep(4, "error", e instanceof Error ? e.message : String(e)); await append("error: " + (e instanceof Error ? e.message : String(e))); }
+    finally { busy.value = false; }
   });
 
   // Reset to the initial state so the user can retry after an error or completion.
-  const reset = $(() => {
+  const reset = $(async () => {
+    await closeSession();   // close before discarding so the USB interface is freed for a fresh connect
     store.steps = ["idle", "idle", "idle", "idle", "idle"];
     store.detail = ["", "", "", "", ""];
     store.log = []; store.ready = false; store.done = false;
-    session.value = undefined; prepared.value = undefined; supported.value = true;
+    prepared.value = undefined; supported.value = true;
   });
 
   return (

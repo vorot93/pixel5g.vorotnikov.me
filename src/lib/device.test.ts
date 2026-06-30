@@ -7,8 +7,11 @@ function mockSession(runText: (cmd: string) => Promise<string>, pushFile = vi.fn
 }
 
 describe("device ops", () => {
-  it("detectSku trims getprop output", async () => {
-    const s = mockSession(async (c) => (c.includes("getprop ro.boot.product.hardware.sku") ? "GUL82\n" : ""));
+  it("detectSku sends the exact getprop and trims its output", async () => {
+    const s = mockSession(async (c) => {
+      expect(c).toBe("getprop ro.boot.product.hardware.sku");
+      return "GUL82\n";
+    });
     expect(await detectSku(s)).toBe("GUL82");
   });
 
@@ -17,8 +20,11 @@ describe("device ops", () => {
     expect(await probeRoot(mockSession(async () => "/system/bin/sh: su: not found"))).toBe(false);
   });
 
-  it("listConfigDir splits whitespace-separated ls output", async () => {
-    const s = mockSession(async () => "lte_1254026417.binarypb  APAC_COMMON_3616442437.binarypb\nap_plmn_mapping.binarypb\n");
+  it("listConfigDir sends the root ls and splits whitespace-separated output", async () => {
+    const s = mockSession(async (c) => {
+      expect(c).toBe(`su -c 'ls ${UECAP_DIR}'`);
+      return "lte_1254026417.binarypb  APAC_COMMON_3616442437.binarypb\nap_plmn_mapping.binarypb\n";
+    });
     expect(await listConfigDir(s)).toEqual([
       "lte_1254026417.binarypb", "APAC_COMMON_3616442437.binarypb", "ap_plmn_mapping.binarypb",
     ]);
