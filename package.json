@@ -1,0 +1,41 @@
+{
+  "name": "pixel5g-installer",
+  "private": true,
+  "type": "module",
+  "version": "0.0.0",
+  "description": "Client-side Pixel UE-capability provisioner (WebUSB + WASM)",
+  "license": "MIT",
+  "engines": {
+    "node": "^18.17.0 || ^20.3.0 || >=21.0.0"
+  },
+  "scripts": {
+    "build": "pnpm build.wasm && qwik build",
+    "build.wasm": "bash scripts/build-wasm.sh",
+    "build.client": "vite build",
+    "build.static": "vite build && vite build --ssr src/entry.ssr.tsx -c adapters/static/vite.config.ts",
+    "build.types": "tsc --incremental --noEmit",
+    "dev": "vite --mode ssr",
+    "qwik": "qwik",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@builder.io/qwik": "^1.20.0",
+    "@builder.io/qwik-city": "^1.20.0",
+    "@types/node": "^20.0.0",
+    "autoprefixer": "^10.4.21",
+    "ignore": "5.3.1",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.4.5",
+    "vite": "^7.3.1",
+    "vite-tsconfig-paths": "^4.2.1",
+    "vitest": "^4.1.9"
+  },
+  "dependencies": {
+    "@yume-chan/adb": "^2.6.0",
+    "@yume-chan/adb-credential-web": "^2.1.0",
+    "@yume-chan/adb-daemon-webusb": "^2.3.2",
+    "@yume-chan/stream-extra": "^2.6.1"
+  }
+}
